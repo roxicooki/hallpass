@@ -1384,6 +1384,12 @@ function paneSync(p){
     (sync.queue.length?' <b>'+sync.queue.length+' change'+(sync.queue.length===1?'':'s')+
       ' waiting to send.</b>':'')+'</p>'+
     '<dl class="dl">'+
+    '<dt>Paste a setup link</dt><dd>Quickest way in: copy the setup link from a '+
+      'device that is already sharing, paste it here, and the two boxes below fill '+
+      'themselves in.<br>'+
+      '<input class="in" id="syncpaste" style="max-width:100%" spellcheck="false" '+
+      'placeholder="https://\u2026/?db=\u2026&board=\u2026"> '+
+      '<button class="btn ghost small" id="syncparse">Use it</button></dd>'+
     '<dt>Database address</dt><dd>From the Firebase console.<br>'+
       '<input class="in" id="syncurl" style="max-width:100%" spellcheck="false" '+
       'placeholder="https://something-default-rtdb.firebaseio.com" value="'+esc(sync.url)+'"></dd>'+
@@ -1401,6 +1407,24 @@ function paneSync(p){
        'no typing. Treat it like a key: anyone who opens it joins this board.</p>';
   }
   p.innerHTML=h;
+
+  $("#syncparse").addEventListener("click",function(){
+    var v=$("#syncpaste").value.trim(),msg=$("#syncmsg");
+    var db="",bd="";
+    try{
+      var q=new URLSearchParams(v.indexOf("?")>=0?v.slice(v.indexOf("?")):v);
+      db=q.get("db")||"";bd=q.get("board")||"";
+    }catch(e){}
+    if(!db||!bd){
+      msg.className="warn";
+      msg.textContent="That link has no database and board in it. Copy it again from the other device.";
+      return;
+    }
+    $("#syncurl").value=db.replace(/\/+$/,"");
+    $("#syncboard").value=bd;
+    msg.className="ok";
+    msg.textContent="Read the link. Now press Save and connect.";
+  });
 
   $("#syncsave").addEventListener("click",function(){
     var u=$("#syncurl").value.trim().replace(/\/+$/,""),b=$("#syncboard").value.trim();
