@@ -4,7 +4,7 @@
 
    Network first: a reachable server always wins, so an update is never more
    than a refresh away. The cache is only the fallback for being offline. */
-var VERSION="hallpass-21";
+var VERSION="hallpass-22";
 var FILES=["./","./index.html","./styles.css","./seed-classes.js","./app.js",
            "./manifest.json","./icon-192.png","./icon-512.png"];
 

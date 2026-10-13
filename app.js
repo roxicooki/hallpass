@@ -93,7 +93,31 @@ function save(){
 
 /* ========================= time ========================= */
 
-function now(){return Date.now()}
+/* Devices disagree about the time \u2014 an iPad whose clock is three hours out
+   would say a student has been gone 181 minutes when the phone says 1. So every
+   shared board asks the database what time it is and works from that instead of
+   its own clock. Without sharing, this is zero and nothing changes. */
+var clockSkew=0;
+function now(){return Date.now()+clockSkew}
+function nowDate(){return new Date(now())}
+
+function checkClock(){
+  if(!syncOn())return;
+  var at=syncBase()+"/_clock.json";
+  fetch(at,{method:"PUT",headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({".sv":"timestamp"})})
+    .then(function(r){return r.ok?r.json():null})
+    .then(function(serverMs){
+      if(typeof serverMs!=="number")return;
+      var skew=serverMs-Date.now();
+      /* Under a few seconds is just latency; leave it alone. */
+      if(Math.abs(skew)<5000)skew=0;
+      if(skew!==clockSkew){
+        clockSkew=skew;
+        redraw();
+      }
+    }).catch(function(){});
+}
 function fmt(ms){
   var d=new Date(ms),h=d.getHours(),m=d.getMinutes(),ap=h>=12?"PM":"AM",h12=h%12;
   if(h12===0)h12=12;
@@ -129,7 +153,7 @@ var DAYLETTER=["","M","T","W","H","F",""];   /* Sun..Sat, H = Thursday */
 
 /* Which class the clock says is in the room, or null. */
 function scheduledClass(){
-  var d=new Date(),mins=d.getHours()*60+d.getMinutes(),letter=DAYLETTER[d.getDay()];
+  var d=nowDate(),mins=d.getHours()*60+d.getMinutes(),letter=DAYLETTER[d.getDay()];
   if(!letter)return null;
   for(var i=0;i<S.classes.length;i++){
     var c=S.classes[i],ms=c.meets||[];
@@ -163,7 +187,7 @@ function clearInRoom(){S.inRoom=null;save();remoteWrite("PUT","/inRoom",null)}
 function classWindow(){
   var c=scheduledClass();
   if(!c)return null;
-  var d=new Date(),mins=d.getHours()*60+d.getMinutes(),letter=DAYLETTER[d.getDay()],ms=c.meets||[];
+  var d=nowDate(),mins=d.getHours()*60+d.getMinutes(),letter=DAYLETTER[d.getDay()],ms=c.meets||[];
   for(var i=0;i<ms.length;i++){
     var st=parseClock(ms[i].s),e=parseClock(ms[i].e);
     if(st==null||e==null)continue;
@@ -739,8 +763,10 @@ function arrToMap(a){
   var m={};(a||[]).forEach(function(x){if(x&&x.id)m[x.id]=x});return m;
 }
 
+var rootSeen=false;   /* true once the stream has handed us a whole board */
 function adoptRemote(){
-  var empty=!remote||!Object.keys(remote).length;
+  var keys=remote?Object.keys(remote):[];
+  var empty=!keys.length||(keys.length===1&&keys[0]==="_clock");
   if(empty){
     /* Nothing up there yet: this device seeds the board. */
     if(!sync.seeded){
@@ -755,8 +781,15 @@ function adoptRemote(){
     return;
   }
   sync.seeded=true;
-  S.out=mapToArr(remote.out);
-  S.log=mapToArr(remote.log);
+  /* Only trust an absent list once we have seen a whole board; a stray message
+     about one key must never be read as "the log is empty". */
+  if(rootSeen){
+    S.out=mapToArr(remote.out);
+    S.log=mapToArr(remote.log);
+  }else{
+    if("out" in remote)S.out=mapToArr(remote.out);
+    if("log" in remote)S.log=mapToArr(remote.log);
+  }
   if(remote.classes)S.classes=remote.classes;
   if(remote.limits)S.limits=remote.limits;
   if(remote.settings){
@@ -782,12 +815,17 @@ function syncConnect(){
     var es=new EventSource(syncBase()+".json");
     sync.es=es;
     es.addEventListener("put",function(e){
-      try{var m=JSON.parse(e.data);pathSet(remote,m.path,m.data,false);adoptRemote()}catch(err){}
+      try{
+        var m=JSON.parse(e.data);
+        if(m.path==="/")rootSeen=true;
+        pathSet(remote,m.path,m.data,false);
+        adoptRemote();
+      }catch(err){}
     });
     es.addEventListener("patch",function(e){
       try{var m=JSON.parse(e.data);pathSet(remote,m.path,m.data,true);adoptRemote()}catch(err){}
     });
-    es.addEventListener("open",function(){setStatus("live");flushQueue()});
+    es.addEventListener("open",function(){setStatus("live");flushQueue();checkClock()});
     es.onerror=function(){
       setStatus("offline");
       /* EventSource reconnects on its own; nudge the write queue too. */
@@ -796,11 +834,42 @@ function syncConnect(){
   }catch(e){setStatus("offline")}
 }
 
-/* The browser throttles a backgrounded tab; pick straight back up on return. */
+/* iOS suspends a web app the moment it goes behind something, and the stream
+   dies with it. Coming back, reconnect at once rather than waiting. */
 document.addEventListener("visibilitychange",function(){
-  if(!document.hidden&&syncOn()){flushQueue();if(!sync.es)syncConnect()}
+  if(document.hidden||!syncOn())return;
+  flushQueue();
+  if(!sync.es||sync.es.readyState===2)syncConnect();
+  else pollOut();
 });
+window.addEventListener("focus",function(){
+  if(syncOn()&&(!sync.es||sync.es.readyState===2))syncConnect();
+});
+window.addEventListener("online",function(){
+  if(syncOn()){flushQueue();syncConnect()}
+});
+
+/* A cheap backstop: who is out is the one thing that must never be stale, and
+   it is a few hundred bytes. If the stream has quietly died, this catches it. */
+function pollOut(){
+  if(!syncOn()||document.hidden)return;
+  fetch(syncBase()+"/out.json",{cache:"no-store"}).then(function(r){
+    return r.ok?r.json():null;
+  }).then(function(d){
+    var mine=S.out.map(function(x){return x.id}).sort().join(","),
+        theirs=mapToArr(d).map(function(x){return x.id}).sort().join(",");
+    if(mine!==theirs){remote.out=d||{};adoptRemote()}
+    setStatus(sync.es&&sync.es.readyState===1?"live":"saved");
+  }).catch(function(){setStatus("offline")});
+}
+
 setInterval(flushQueue,8000);
+setInterval(function(){
+  if(!syncOn()||document.hidden)return;
+  if(!sync.es||sync.es.readyState===2){syncConnect();return}
+  pollOut();
+},20000);
+setInterval(checkClock,10*60000);
 
 /* ========================= teacher panel ========================= */
 
@@ -998,7 +1067,7 @@ var stuRange="month",stuDetail=null;
 
 var RANGES=[{k:"month",label:"This month"},{k:"30",label:"Last 30 days"},{k:"all",label:"All time"}];
 function rangeStart(k){
-  var d=new Date();
+  var d=nowDate();
   if(k==="month")return new Date(d.getFullYear(),d.getMonth(),1).getTime();
   if(k==="30")return now()-30*86400000;
   return 0;
@@ -1479,6 +1548,7 @@ if("serviceWorker" in navigator){
 }
 
 syncConnect();
+checkClock();
 
 show("s0");
 })();
