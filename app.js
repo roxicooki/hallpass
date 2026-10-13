@@ -643,6 +643,7 @@ function buildKeypad(){
 var curPane="room";
 
 function openTeacher(pane){
+  if(pane!==curPane)stuDetail=null;
   curPane=pane||"room";
   var navs=document.querySelectorAll(".tnav");
   for(var i=0;i<navs.length;i++){
@@ -730,15 +731,48 @@ function paneOut(p){
 }
 
 /* ---- log ---- */
+/* Nothing is ever thrown away: every day the board has seen is still here, and
+   the strip of dates is how you get back to it. */
+var logDay=null;
+function dayLabel(key){
+  var p=key.split("-"),d=new Date(+p[0],+p[1]-1,+p[2]);
+  if(key===dayKey(now()))return "Today";
+  if(key===dayKey(now()-86400000))return "Yesterday";
+  return fmtDate(d.getTime());
+}
+function dayFull(key){
+  var p=key.split("-");
+  return fmtDate(new Date(+p[0],+p[1]-1,+p[2]).getTime());
+}
 function paneLog(p){
-  var today=dayKey(now()),rows=S.log.filter(function(r){return r.day===today});
+  var today=dayKey(now()),days=[],seen={};
+  S.log.forEach(function(r){if(r.day&&!seen[r.day]){seen[r.day]=1;days.push(r.day)}});
+  var realDays=days.length;
+  if(!seen[today])days.push(today);
+  days.sort().reverse();
+  if(!logDay||(!seen[logDay]&&logDay!==today))logDay=today;
+
+  var rows=S.log.filter(function(r){return r.day===logDay});
   rows.sort(function(a,b){return b.out-a.out});
-  var h='<h2>Today\'s log</h2><p class="pnote">'+fmtDate(now())+' · '+rows.length+
-    (rows.length===1?' record':' records')+'. The export covers every day stored on this device.</p>'+
+
+  var h='<h2>Log</h2><p class="pnote">Every day the board has been used is kept on this '+
+    'device — nothing is cleared overnight. The export covers all of them.</p>'+
     '<div class="row"><button class="btn" id="csvdl">Download CSV</button>'+
     '<button class="btn ghost" id="csvcopy">Copy CSV</button>'+
-    '<span class="tnum" style="opacity:.55">'+S.log.length+' records stored</span></div>';
-  if(!rows.length){h+='<p class="pnote">Nothing yet today.</p>'}
+    '<span class="tnum" style="opacity:.55">'+S.log.length+' records over '+realDays+
+    (realDays===1?' day':' days')+'</span></div>';
+
+  h+='<div class="days">';
+  days.forEach(function(d){
+    var n=0;S.log.forEach(function(r){if(r.day===d)n++});
+    h+='<button class="day'+(d===logDay?" on":"")+'" data-day="'+esc(d)+'">'+
+       esc(dayLabel(d))+'<small>'+n+'</small></button>';
+  });
+  h+='</div>';
+
+  h+='<p class="pnote" style="margin-top:2.2vh"><b>'+esc(dayFull(logDay))+'</b> · '+
+     rows.length+(rows.length===1?' record':' records')+'</p>';
+  if(!rows.length){h+='<p class="pnote">Nothing on this day.</p>'}
   else{
     h+='<table class="t"><tr><th>Out</th><th>Student</th><th>Class</th><th>Reason</th><th>Back</th><th>Minutes</th></tr>';
     rows.forEach(function(r){
@@ -754,6 +788,9 @@ function paneLog(p){
     h+='</table>';
   }
   p.innerHTML=h;
+  p.querySelectorAll("[data-day]").forEach(function(b){
+    b.addEventListener("click",function(){logDay=b.getAttribute("data-day");drawPane()});
+  });
   var dl=$("#csvdl"),cp=$("#csvcopy");
   if(dl)dl.addEventListener("click",downloadCSV);
   if(cp)cp.addEventListener("click",function(){copyText(buildCSV(),cp,"Copy CSV")});
@@ -791,38 +828,188 @@ function copyText(text,btn,label){
 }
 
 /* ---- students ---- */
+/* The question a teacher actually has is not "how many trips in total" but
+   "who is going every single lesson, and for how long". So: a range, a sort by
+   frequency, a flag on the outliers, and one tap into that student's own log. */
+var stuRange="month",stuDetail=null;
+
+var RANGES=[{k:"month",label:"This month"},{k:"30",label:"Last 30 days"},{k:"all",label:"All time"}];
+function rangeStart(k){
+  var d=new Date();
+  if(k==="month")return new Date(d.getFullYear(),d.getMonth(),1).getTime();
+  if(k==="30")return now()-30*86400000;
+  return 0;
+}
+function rangeLabel(k){
+  for(var i=0;i<RANGES.length;i++){if(RANGES[i].k===k)return RANGES[i].label}
+  return "All time";
+}
+function inRange(r,k){return r.out>=rangeStart(k)}
+
+/* Days the board was actually used \u2014 the honest denominator. A day nobody
+   touched it (holiday, snow day, forgotten iPad) should not count against
+   anyone. */
+function boardDays(k){
+  var seen={},out=[];
+  S.log.forEach(function(r){
+    if(!inRange(r,k)||!r.day||seen[r.day])return;
+    seen[r.day]=1;out.push(r.day);
+  });
+  return out;
+}
+function classMetDays(c,k){
+  var letters="";
+  (c.meets||[]).forEach(function(m){letters+=String(m.d||"").toUpperCase()});
+  if(!letters)return [];
+  return boardDays(k).filter(function(day){
+    var p=day.split("-"),wd=new Date(+p[0],+p[1]-1,+p[2]).getDay();
+    return letters.indexOf(DAYLETTER[wd])>=0;
+  });
+}
+
+function statsFor(cls,nm,k){
+  var a={trips:0,mins:0,walk:0,longest:0,days:{},rows:[]};
+  S.log.forEach(function(r){
+    if(r.nm!==nm||r.cls!==cls||!inRange(r,k))return;
+    a.rows.push(r);
+    a.days[r.day]=1;
+    if(r.type==="walkout"){a.walk++;return}
+    a.trips++;
+    if(r.dur){a.mins+=r.dur;if(r.dur>a.longest)a.longest=r.dur}
+  });
+  a.dayCount=Object.keys(a.days).length;
+  a.avg=a.trips?Math.round(a.mins/a.trips):0;
+  a.rows.sort(function(x,y){return y.out-x.out});
+  return a;
+}
+
 function paneStudents(p){
+  if(stuDetail)return paneStudentDetail(p);
   if(!S.classes.length){
     p.innerHTML='<h2>Students</h2><p class="pnote">Add a class first, under Classes.</p>';
     return;
   }
-  var agg={};
-  S.log.forEach(function(r){
-    var k=(r.cls||"")+"::"+r.nm,a=agg[k]||(agg[k]={trips:0,mins:0,walk:0});
-    if(r.type==="walkout")a.walk++;
-    else{a.trips++;if(r.dur)a.mins+=r.dur}
+  var k=stuRange;
+  var h='<h2>Students</h2><p class="pnote">Who is leaving the room, how often, and for '+
+    'how long. <b>Out of</b> counts the days that class met and the board was in use, so a '+
+    'student marked 7 of 8 is going nearly every lesson. Tap a name for their own log.</p>'+
+    '<div class="days">';
+  RANGES.forEach(function(r){
+    h+='<button class="day'+(r.k===k?" on":"")+'" data-range="'+r.k+'">'+esc(r.label)+'</button>';
   });
+  h+='</div>';
 
-  var h='<h2>Students</h2><p class="pnote">A student makes a fresh 4-digit PIN each time '+
-    'they sign out and needs it to get back in, so nobody can sign a friend back in. '+
-    'Nothing is stored between trips — if someone forgets theirs, mark them back under '+
-    'Still out.</p>';
-
+  var anything=false;
   S.classes.forEach(function(c){
-    h+='<h2 style="margin-top:3vh">'+esc(c.name)+'</h2>'+
-      '<p class="pnote">'+esc(meetsText(c)||"no meeting times set")+' · '+
-      c.roster.length+' students</p>';
-    if(!c.roster.length){h+='<p class="pnote">No students yet — add them under Classes.</p>';return}
-    h+='<table class="t"><tr><th>Student</th><th>Trips</th><th>Minutes out</th><th>Walkouts</th></tr>';
-    c.roster.forEach(function(nm){
-      var a=agg[c.name+"::"+nm]||{trips:0,mins:0,walk:0};
-      h+='<tr><td><b>'+esc(nm)+'</b>'+(isOut(c.id,nm)?' <span class="badge outnow">out now</span>':'')+
-        '</td><td class="tnum">'+a.trips+'</td><td class="tnum">'+a.mins+
-        '</td><td class="tnum">'+(a.walk||"—")+'</td></tr>';
+    if(!c.roster.length)return;
+    var met=classMetDays(c,k).length;
+    var list=c.roster.map(function(nm){
+      var a=statsFor(c.name,nm,k);a.nm=nm;return a;
+    });
+    var active=list.filter(function(a){return a.trips||a.walk});
+    var totalTrips=0;
+    active.forEach(function(a){totalTrips+=a.trips});
+    var avgTrips=active.length?totalTrips/active.length:0;
+    list.sort(function(x,y){return y.trips-x.trips||y.mins-x.mins||x.nm.localeCompare(y.nm)});
+
+    h+='<h2 style="margin-top:3.2vh">'+esc(c.name)+'</h2>'+
+      '<p class="pnote">'+rangeLabel(k)+' \u00b7 '+totalTrips+
+      (totalTrips===1?' trip':' trips')+' across '+active.length+
+      (active.length===1?' student':' students')+
+      (met?' \u00b7 the class met '+met+(met===1?' day':' days'):'')+'</p>';
+
+    if(!active.length){
+      h+='<p class="pnote">Nobody from '+esc(c.name)+' has left the room in this period.</p>';
+      return;
+    }
+    anything=true;
+    h+='<table class="t"><tr><th>Student</th><th>Trips</th><th>Out of</th>'+
+       '<th>Minutes</th><th>Average</th><th>Longest</th><th>Walkouts</th></tr>';
+    list.forEach(function(a){
+      if(!a.trips&&!a.walk)return;
+      /* A frequent flier: going far more than their classmates, and often
+         enough that it is a pattern rather than a bad week. */
+      var flier=a.trips>=3&&avgTrips>0&&a.trips>=avgTrips*1.8;
+      var everyTime=met>0&&a.dayCount>=met;
+      h+='<tr'+(flier?' class="flier"':'')+'><td><b>'+esc(a.nm)+'</b>'+
+        (flier?' <span class="badge flier">frequent</span>':'')+
+        (everyTime?' <span class="badge every">every lesson</span>':'')+
+        (isOut(c.id,a.nm)?' <span class="badge outnow">out now</span>':'')+
+        '</td><td class="tnum">'+a.trips+'</td>'+
+        '<td class="tnum">'+(met?a.dayCount+" of "+met:"\u2014")+'</td>'+
+        '<td class="tnum">'+a.mins+'</td>'+
+        '<td class="tnum">'+(a.trips?a.avg+" min":"\u2014")+'</td>'+
+        '<td class="tnum">'+(a.longest?a.longest+" min":"\u2014")+'</td>'+
+        '<td class="tnum">'+(a.walk||"\u2014")+'</td>'+
+        '<td><button class="btn ghost small" data-cls="'+esc(c.name)+'" data-nm="'+
+        esc(a.nm)+'">Log</button></td></tr>';
     });
     h+='</table>';
   });
+  if(!anything&&S.log.length===0){
+    h+='<p class="pnote">No sign-outs recorded yet.</p>';
+  }
   p.innerHTML=h;
+
+  p.querySelectorAll("[data-range]").forEach(function(b){
+    b.addEventListener("click",function(){stuRange=b.getAttribute("data-range");drawPane()});
+  });
+  p.querySelectorAll("[data-nm]").forEach(function(b){
+    b.addEventListener("click",function(){
+      stuDetail={cls:b.getAttribute("data-cls"),nm:b.getAttribute("data-nm")};
+      drawPane();
+    });
+  });
+}
+
+function paneStudentDetail(p){
+  var cls=stuDetail.cls,nm=stuDetail.nm,k=stuRange;
+  var c=null;
+  S.classes.forEach(function(x){if(x.name===cls)c=x});
+  var a=statsFor(cls,nm,k),met=c?classMetDays(c,k).length:0;
+
+  var h='<div class="row"><button class="btn ghost" id="stuback">\u2190 All students</button></div>'+
+    '<h2>'+esc(nm)+'</h2><p class="pnote">'+esc(cls)+' \u00b7 '+rangeLabel(k)+'</p>'+
+    '<div class="days">';
+  RANGES.forEach(function(r){
+    h+='<button class="day'+(r.k===k?" on":"")+'" data-range="'+r.k+'">'+esc(r.label)+'</button>';
+  });
+  h+='</div>';
+
+  h+='<div class="figs">'+
+    '<div class="fig"><b>'+a.trips+'</b><span>trips</span></div>'+
+    '<div class="fig"><b>'+(met?a.dayCount+" / "+met:"\u2014")+'</b><span>days out, of days the class met</span></div>'+
+    '<div class="fig"><b>'+a.mins+'</b><span>minutes out in total</span></div>'+
+    '<div class="fig"><b>'+(a.trips?a.avg:"\u2014")+'</b><span>minutes on average</span></div>'+
+    '<div class="fig"><b>'+(a.longest||"\u2014")+'</b><span>longest trip</span></div>'+
+    '<div class="fig"><b>'+(a.walk||"\u2014")+'</b><span>walkouts</span></div>'+
+    '</div>';
+
+  if(met&&a.dayCount>=met&&a.trips){
+    h+='<p class="pnote warn" style="margin-top:2vh">Out of the room on every day '+
+       esc(cls)+' met in this period.</p>';
+  }
+
+  if(!a.rows.length){
+    h+='<p class="pnote">Nothing in this period.</p>';
+  }else{
+    h+='<table class="t"><tr><th>Date</th><th>Out</th><th>Back</th><th>Minutes</th><th>Reason</th></tr>';
+    a.rows.forEach(function(r){
+      var isWalk=r.type==="walkout";
+      h+='<tr'+(isWalk?' class="walk"':'')+'><td>'+esc(dayLabel(r.day))+'</td>'+
+        '<td class="tnum">'+fmtShort(r.out)+'</td>'+
+        '<td class="tnum">'+(r.back?fmtShort(r.back):"\u2014")+'</td>'+
+        '<td class="tnum">'+(r.dur!=null?r.dur:"\u2014")+'</td><td>'+
+        (isWalk?'<span class="badge walk">walked out</span>':esc(reasonOf(r.reason).label))+
+        (r.override?' <span class="badge pass">override</span>':'')+'</td></tr>';
+    });
+    h+='</table>';
+  }
+  p.innerHTML=h;
+  $("#stuback").addEventListener("click",function(){stuDetail=null;drawPane()});
+  p.querySelectorAll("[data-range]").forEach(function(b){
+    b.addEventListener("click",function(){stuRange=b.getAttribute("data-range");drawPane()});
+  });
 }
 
 /* ---- classes ---- */

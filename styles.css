@@ -274,6 +274,26 @@ body{background:var(--bg);color:var(--ink);font-family:var(--f);
 .tpane h2{font-size:clamp(20px,4vh,34px);font-weight:700;letter-spacing:-.02em;margin:0 0 .4vh}
 .tpane .pnote{font-size:clamp(12px,2vh,17px);opacity:.6;font-weight:500;margin:0 0 2.4vh;
   max-width:62ch;line-height:1.5}
+/* The strip of days across the top of the log. */
+.days{display:flex;flex-wrap:wrap;gap:8px;margin-top:.6vh}
+.day{display:flex;align-items:center;gap:8px;border:2px solid var(--edge);background:var(--tile);
+  border-radius:999px;cursor:pointer;color:var(--ink);
+  font:600 clamp(11px,1.8vh,15px) var(--f);padding:clamp(7px,1.2vh,11px) clamp(11px,1.4vw,16px)}
+.day small{font-weight:800;font-variant-numeric:tabular-nums;opacity:.45;font-size:.9em}
+.day.on{border-color:var(--ink);background:var(--bg);font-weight:800}
+.day.on small{opacity:.7}
+@media (hover:hover){.day:hover{border-color:var(--ink)}}
+
+/* The headline figures on a student's own page. */
+.figs{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
+  gap:clamp(8px,1.4vh,14px);margin-top:2.4vh}
+.fig{border:2px solid var(--edge);border-radius:14px;background:var(--tile);
+  padding:clamp(11px,1.8vh,18px) clamp(12px,1.6vw,18px)}
+.fig b{display:block;font-size:clamp(22px,4.4vh,40px);font-weight:800;line-height:1;
+  letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.fig span{display:block;margin-top:.7vh;font-size:clamp(10px,1.5vh,13px);font-weight:600;
+  opacity:.55;line-height:1.3}
+
 table.t{width:100%;border-collapse:collapse;font-size:clamp(12px,1.9vh,16px)}
 table.t th{text-align:left;font-size:clamp(9px,1.4vh,12px);font-weight:800;letter-spacing:.09em;
   text-transform:uppercase;opacity:.5;padding:0 10px 8px;border-bottom:2px solid var(--edge);
@@ -288,6 +308,10 @@ table.t tr.walk td{background:var(--occ-fill)}
 .badge.walk{border-color:var(--occ);background:var(--occ-fill);color:var(--occ)}
 .badge.outnow{border-color:var(--butter);background:var(--butter-soft);color:var(--butter-ink)}
 .badge.nopin{border-style:dashed;opacity:.7}
+.badge.flier{border-color:var(--occ);background:var(--occ-fill);color:var(--occ)}
+.badge.every{border-color:var(--butter);background:var(--butter-soft);color:var(--butter-ink)}
+/* The row itself is tinted too, so the pattern shows without reading numbers. */
+table.t tr.flier td{background:color-mix(in srgb,var(--occ) 6%,transparent)}
 .btn{border:2px solid var(--ink);background:var(--ink);color:#fff;border-radius:11px;cursor:pointer;
   font:700 clamp(12px,2vh,16px) var(--f);padding:clamp(9px,1.5vh,14px) clamp(14px,2vw,22px)}
 .btn.ghost{background:transparent;color:var(--ink);border-color:var(--edge)}
