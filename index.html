@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no">
+<title>Hall Pass</title>
+
+<!-- Makes "Add to Home Screen" launch full-screen with no Safari chrome -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Hall Pass">
+<meta name="theme-color" content="#1F6B42">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" href="icon-192.png">
+
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&display=swap">
+<link rel="stylesheet" href="styles.css?v=18">
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ============ S0 : the room status, full bleed ============ -->
+  <div class="screen status open" id="s0">
+    <div class="statusclock" id="s0clock">--:--</div>
+    <button class="hotcorner" id="hotcorner" aria-label="Teacher access"></button>
+    <div class="statusmid">
+      <div class="statusword" id="s0word">OPEN</div>
+      <div class="statusline" id="s0line">No one is out of the room</div>
+      <div class="whoout" id="s0who"></div>
+    </div>
+    <div class="statusfoot">
+      <div class="statusclass" id="s0class"></div>
+      <div class="statushint" id="s0hint">Tap anywhere to sign out or back in</div>
+    </div>
+  </div>
+
+  <!-- ============ S1 : the name grid ============ -->
+  <div class="screen" id="s1" hidden>
+    <div class="bar">
+      <div class="bartitle" id="bartitle">Tap your name</div>
+      <div class="barclock" id="clock">--:--</div>
+      <button class="cancel small" data-cancel>Close</button>
+    </div>
+    <div class="rosterwrap"><div class="grid" id="grid"></div></div>
+  </div>
+
+  <!-- ============ S2 : pick a reason ============ -->
+  <div class="screen sheet" id="s2" hidden>
+    <h2 class="askline"><span id="s2name">Name</span>, where are you going?</h2>
+    <p class="caution" id="s2caution" hidden></p>
+    <div class="reasons" id="reasons"></div>
+    <button class="rbtn overridebtn" id="overridebtn" hidden></button>
+    <div class="foot">
+      <button class="cancel wide" data-cancel>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5l-7 7 7 7"/><path d="M4 12h16"/></svg>
+        Wrong name &mdash; go back
+      </button>
+    </div>
+  </div>
+
+  <!-- ============ S3 : signed out ============ -->
+  <div class="screen sheet confirm" id="s3" hidden>
+    <div class="tick ok"><svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></div>
+    <div class="cname" id="s3name">Name</div>
+    <div class="ctime" id="s3time">--:--</div>
+    <div class="cwhat" id="s3reason">Signed out</div>
+    <div class="takepass" id="s3pass">Take the hall pass</div>
+  </div>
+
+  <!-- ============ S5 : back confirm ============ -->
+  <div class="screen sheet confirm" id="s5" hidden>
+    <div class="tick back"><svg viewBox="0 0 24 24"><path d="M9 14l-5-5 5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></svg></div>
+    <div class="cname" id="s5name">Name</div>
+    <div class="ctime" id="s5time">--:--</div>
+    <div class="cwhat" id="s5dur">Back</div>
+  </div>
+
+  <!-- ============ Hand back : teacher allowed it, student takes over ======= -->
+  <div class="screen handoff" id="shand" hidden>
+    <div class="handmid">
+      <div class="handword">ALLOWED</div>
+      <div class="handline">Hand the iPad back to</div>
+      <div class="handname" id="handname">Name</div>
+    </div>
+    <button class="handbtn" id="handbtn">I have it &mdash; carry on</button>
+  </div>
+
+  <!-- ============ PIN pad (teacher, student, override) ============ -->
+  <div class="screen sheet pinscreen" id="spin" hidden>
+    <h2 id="pintitle">PIN</h2>
+    <p class="sub" id="pinhint">Enter your PIN</p>
+    <div class="pindots" id="pindots"></div>
+    <div class="keypad" id="keypad"></div>
+    <div class="foot"><button class="cancel" data-cancel>Cancel</button></div>
+  </div>
+
+  <!-- ============ Teacher panel ============ -->
+  <div class="screen teacher" id="steacher" hidden>
+    <div class="trail">
+      <div class="tbrand">Hall Pass</div>
+      <button class="tnav" data-pane="room">In the room</button>
+      <button class="tnav" data-pane="out">Still out</button>
+      <button class="tnav" data-pane="log">Today's log</button>
+      <button class="tnav" data-pane="students">Students</button>
+      <button class="tnav" data-pane="limits">Who may go</button>
+      <button class="tnav" data-pane="classes">Classes</button>
+      <button class="tnav" data-pane="settings">Settings</button>
+      <div class="tspacer"></div>
+      <button class="tdone" data-cancel>Done &mdash; back to board</button>
+    </div>
+    <div class="tpane" id="pane"></div>
+  </div>
+
+</div>
+
+<script src="seed-classes.js?v=18"></script>
+<script src="app.js?v=18"></script>
+</body>
+</html>

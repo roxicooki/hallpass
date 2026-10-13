@@ -1,0 +1,316 @@
+/* Hall Pass — classroom sign-out board.
+   The resting screen is one solid colour read from the back of the room:
+   green means the room is clear, red means someone is out. Everything else
+   is a short detour off that screen and returns to it on its own. */
+:root{
+  --bg:#FFFFFF; --ink:#1A1915; --tile:#F3F1EA; --edge:#DCD7C9;
+  --butter:#F0CE5E; --butter-soft:#FAEFCB; --butter-ink:#8A6A10;
+  --open:#1F6B42; --open-fill:#D7E9DD; --open-edge:#9CC7AC; --on-open:#FFFFFF;
+  --occ:#AD2A1E; --occ-fill:#F7DBD6; --occ-edge:#E0A69B;
+  --f:"Archivo","Helvetica Neue",Arial,sans-serif;
+  color-scheme:light;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{height:100%;margin:0;overflow:hidden}
+body{background:var(--bg);color:var(--ink);font-family:var(--f);
+  -webkit-font-smoothing:antialiased;-webkit-user-select:none;user-select:none;
+  -webkit-tap-highlight-color:transparent;overscroll-behavior:none}
+#app{position:fixed;inset:0}
+.screen{position:absolute;inset:0;display:flex;flex-direction:column;
+  padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+:focus-visible{outline:4px solid var(--butter);outline-offset:-4px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+
+/* ================= S0 : the room status ================= */
+.status{align-items:center;justify-content:center;text-align:center;cursor:pointer;
+  transition:background-color .3s}
+.status.open{background:var(--open)}
+.status.occ{background:var(--occ)}
+.status.walk{background:var(--butter)}
+.status *{color:#fff}
+.status.walk *{color:#3B2E07}        /* white on butter is unreadable */
+.status.walk .statusclock,.status.walk .statushint{opacity:.62}
+.statusmid{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  width:100%;padding:0 4vw;min-height:0}
+.statusword{font-size:clamp(68px,22vh,260px);font-weight:800;letter-spacing:-.035em;
+  line-height:.86;text-transform:uppercase}
+.statusword.sm{font-size:clamp(40px,12vh,150px);letter-spacing:-.025em;line-height:.92}
+.statusline{font-size:clamp(16px,3.4vh,38px);font-weight:600;opacity:.85;margin-top:2.2vh;
+  text-wrap:balance;max-width:24ch}
+.whoout{display:flex;flex-direction:column;gap:1.1vh;align-items:center;margin-top:3vh;
+  width:100%;overflow:auto}
+.whoout .wname{font-size:clamp(22px,5.4vh,62px);font-weight:800;letter-spacing:-.02em;
+  line-height:1.05}
+.whoout .wdet{font-size:clamp(12px,2.2vh,22px);font-weight:600;opacity:.8;margin-top:.4vh}
+.whoout .wdet.long{opacity:1;border-bottom:3px solid rgba(255,255,255,.65);padding-bottom:2px}
+.statusclock{position:absolute;top:clamp(14px,2.6vh,30px);left:clamp(16px,3vw,38px);
+  font-size:clamp(15px,2.6vh,26px);font-weight:700;font-variant-numeric:tabular-nums;opacity:.72}
+/* The class in the room is the thing to check from a distance; the tap hint is
+   for whoever is already standing at the iPad. */
+.statusfoot{flex:0 0 auto;padding:0 4vw clamp(16px,3vh,36px);text-align:center}
+.statusclass{font-size:clamp(26px,6vh,64px);font-weight:800;letter-spacing:-.02em;
+  line-height:1;opacity:.9}
+.statushint{font-size:clamp(12px,2.2vh,22px);font-weight:700;letter-spacing:.07em;
+  text-transform:uppercase;opacity:.6;margin-top:clamp(5px,1vh,12px);text-wrap:balance}
+/* Invisible teacher door. Long press, so leaning on the corner does nothing. */
+.hotcorner{position:absolute;top:0;right:0;width:clamp(64px,9vw,110px);height:clamp(54px,9vh,96px);
+  border:none;background:transparent;cursor:pointer;-webkit-appearance:none}
+
+/* ================= S1 : the name grid ================= */
+.bar{flex:0 0 auto;display:flex;align-items:center;gap:clamp(10px,2vw,22px);
+  padding:clamp(10px,1.8vh,20px) clamp(16px,3vw,40px);border-bottom:2px solid var(--edge)}
+.bartitle{flex:1;font-size:clamp(17px,3.4vh,34px);font-weight:700;letter-spacing:-.02em}
+.barclock{font-size:clamp(15px,2.6vh,26px);font-weight:700;font-variant-numeric:tabular-nums;
+  opacity:.55}
+.rosterwrap{flex:1;min-height:0;padding:clamp(10px,1.6vh,18px) clamp(16px,3vw,40px) clamp(14px,2.2vh,24px)}
+/* Columns, rows and type size are worked out in app.js from the class size and
+   the screen, so every roster fills the page the same way. These are only the
+   fallbacks for before that runs. */
+.grid{display:grid;grid-template-columns:repeat(4,1fr);grid-auto-rows:1fr;
+  gap:clamp(6px,1vh,12px);height:100%}
+.tile{border:2px solid var(--edge);background:var(--tile);border-radius:12px;
+  font:600 var(--tilefont,clamp(11px,2.3vh,22px))/1.15 var(--f);color:var(--ink);
+  cursor:pointer;padding:4px;display:grid;place-items:center;text-align:center;
+  transition:transform .08s,box-shadow .12s;min-height:0;overflow:hidden;
+  overflow-wrap:anywhere}
+.tile:active{transform:scale(.97)}
+@media (hover:hover){.tile:hover{box-shadow:0 0 0 3px var(--butter)}}
+.tile.isout{border-color:var(--occ);background:var(--occ-fill);color:var(--occ)}
+.tile.isout::after{content:"OUT \2014 TAP TO COME BACK";display:block;font-size:.46em;
+  font-weight:800;letter-spacing:.07em;opacity:.85;margin-top:3px}
+.emptyroster{grid-column:1/-1;display:grid;place-items:center;text-align:center;
+  white-space:pre-line;font-size:clamp(14px,2.6vh,22px);font-weight:600;opacity:.5;
+  padding:4vh;line-height:1.5}
+
+/* Class picker, shown when the timetable says nothing is meeting. */
+.picker{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:clamp(8px,1.6vh,16px);
+  align-content:center;justify-content:center;height:100%}
+.pickbtn{border:2px solid var(--edge);background:var(--tile);border-radius:16px;cursor:pointer;
+  display:grid;place-items:center;gap:6px;padding:clamp(16px,3vh,34px) clamp(20px,3vw,46px);
+  font:800 clamp(20px,4.4vh,44px)/1 var(--f);color:var(--ink);transition:box-shadow .12s}
+@media (hover:hover){.pickbtn:hover{box-shadow:0 0 0 3px var(--butter)}}
+.pickbtn:active{transform:scale(.98)}
+.pickbtn small{font:600 clamp(10px,1.6vh,14px)/1.3 var(--f);opacity:.55;letter-spacing:.03em}
+/* Same buttons inside the teacher panel: left-aligned, normal reading size. */
+.picker.wrap{height:auto;justify-content:flex-start;align-content:flex-start}
+.picker.wrap .pickbtn{font-size:clamp(17px,3vh,26px);padding:clamp(12px,2vh,20px) clamp(14px,2vw,26px)}
+.pickbtn.on{border-color:var(--open);background:var(--open-fill);box-shadow:inset 0 0 0 2px var(--open-edge)}
+.pickbtn .nowtag{color:var(--open);opacity:1;font-weight:800;text-transform:uppercase;letter-spacing:.07em}
+
+/* ================= sheets ================= */
+.sheet{background:var(--bg);padding:clamp(20px,4vh,54px) clamp(18px,4vw,60px)}
+.sheet h2{font-size:clamp(26px,6vh,56px);font-weight:700;letter-spacing:-.02em;margin:0;
+  text-wrap:balance}
+/* The one line that matters on this page: whose turn it is, and the question.
+   Muted with colour, not opacity, so the name can still come back to full ink. */
+.askline{font-size:clamp(30px,7.4vh,76px)!important;font-weight:600;line-height:1.02;
+  letter-spacing:-.025em;color:color-mix(in srgb,var(--ink) 46%,var(--bg))}
+.askline #s2name{font-weight:800;color:var(--ink)}
+.sheet .sub{font-size:clamp(14px,2.8vh,26px);opacity:.65;margin:1.4vh 0 0;font-weight:500}
+/* Each destination is its own small card with a coloured mark. The bathroom
+   takes the full top row, because it is most of the traffic. */
+.reasons{display:grid;grid-template-columns:repeat(3,1fr);
+  grid-template-rows:minmax(0,2.4fr) minmax(0,1fr) minmax(0,1fr);
+  gap:clamp(8px,1.4vh,16px);margin-top:2.2vh;flex:1;min-height:0}
+@media (max-width:620px){
+  .reasons{grid-template-columns:repeat(2,1fr);
+    grid-template-rows:minmax(0,2fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1fr)}
+}
+.rbtn{--rc:var(--ink);
+  border:2px solid var(--edge);background:var(--tile);border-radius:14px;
+  color:var(--ink);cursor:pointer;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:clamp(4px,.8vh,8px);
+  padding:clamp(10px,1.8vh,18px) clamp(8px,1.2vw,14px);min-height:0;
+  transition:transform .08s,box-shadow .12s,border-color .12s}
+@media (hover:hover){.rbtn:hover{box-shadow:0 0 0 3px var(--rc);border-color:var(--rc)}}
+.rbtn:active{transform:scale(.98)}
+.ricon{display:grid;place-items:center;flex:0 0 auto;
+  width:clamp(36px,6.6vh,62px);aspect-ratio:1;border-radius:50%;
+  background:color-mix(in srgb,var(--rc) 15%,transparent);color:var(--rc)}
+.ricon svg{width:58%;height:58%;fill:none;stroke:currentColor;stroke-width:1.9;
+  stroke-linecap:round;stroke-linejoin:round}
+.rlabel{font:700 clamp(13px,2.4vh,23px)/1.1 var(--f);text-align:center}
+.rbtn small{font:600 clamp(8px,1.3vh,12px)/1.2 var(--f);opacity:.5;letter-spacing:.04em;
+  text-transform:uppercase;text-align:center}
+/* The bathroom is the one most of them want: the whole top of the page. */
+.rbtn.big{grid-column:1/-1;flex-direction:row;gap:clamp(14px,2.6vw,34px);
+  justify-content:center;padding:clamp(12px,2.2vh,28px) clamp(16px,2.6vw,36px);
+  border-width:3px;border-color:var(--rc);
+  background:color-mix(in srgb,var(--rc) 8%,var(--tile))}
+.rbtn.big .ricon{width:min(clamp(56px,16vh,150px),26vw)}
+.rbtn.big .rlabel{font-size:min(clamp(26px,8.4vh,76px),9vw);letter-spacing:-.02em}
+.rbtn.big small{position:absolute;right:clamp(14px,2vw,26px);bottom:clamp(10px,1.4vh,18px);
+  text-align:right}
+.rbtn.big{position:relative}
+/* Full, not disabled: a student may still tap it to ask for an override. */
+.rbtn.full{opacity:.5;border-style:dashed;background:transparent}
+.rbtn.full small{color:var(--occ);opacity:1;font-weight:800}
+.rbtn.full .ricon{filter:grayscale(1)}
+
+/* Someone is unaccounted for: say so before anyone else goes. */
+.caution{display:flex;align-items:center;gap:10px;margin:1.8vh 0 0;
+  border:2px solid var(--edge);background:var(--tile);border-radius:12px;
+  padding:clamp(9px,1.5vh,15px) clamp(12px,1.8vw,20px);
+  font:600 clamp(12px,2.1vh,19px)/1.35 var(--f);color:var(--ink);opacity:.8}
+/* Someone unaccounted for is a different kind of problem: it gets the yellow. */
+.caution.warn{border-color:var(--butter);background:var(--butter-soft);
+  color:var(--butter-ink);font-weight:700;opacity:1}
+.caution.ok{border-color:var(--open-edge);background:var(--open-fill);color:var(--open);
+  font-weight:700;opacity:1}
+
+/* The way through when the board is shut: wider and taller than a card, so it
+   is obvious it is not one of the destinations. */
+.overridebtn{--rc:#AD2A1E;flex:0 0 auto;flex-direction:row;justify-content:center;
+  gap:clamp(10px,1.6vw,18px);margin-top:clamp(8px,1.4vh,16px);
+  border:3px solid var(--occ);background:var(--occ-fill);color:var(--occ);
+  padding:clamp(12px,2.2vh,22px) clamp(16px,2.4vw,30px)}
+.overridebtn .ricon{width:clamp(34px,5vh,50px);background:transparent}
+.overridebtn .rlabel{font-size:clamp(16px,3vh,30px)}
+.overridebtn small{opacity:.75;text-align:left}
+@media (max-width:620px){.overridebtn small{display:none}}
+
+/* The teacher's card. Same shape as a destination, red so it reads as a
+   different kind of thing. */
+.rbtn.walkoutbtn{--rc:#AD2A1E;border-color:var(--occ-edge);background:var(--occ-fill);
+  color:var(--occ)}
+.rbtn.walkoutbtn small{opacity:.75}
+
+/* The grid takes the spare height, so the footer has to hold its own. */
+.foot{flex:0 0 auto;display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:2.2vh}
+.cancel{border:2px solid var(--edge);background:transparent;color:var(--ink);border-radius:12px;
+  padding:clamp(11px,1.9vh,19px) clamp(22px,3vw,38px);font:700 clamp(14px,2.4vh,22px) var(--f);
+  cursor:pointer}
+.cancel.small{padding:clamp(8px,1.3vh,13px) clamp(14px,2vw,22px);font-size:clamp(12px,2vh,17px)}
+/* A mis-tapped name is the most common mistake on this screen, so the way back
+   is a full-width target in the same language as the cards above it. */
+.cancel.wide{width:100%;display:flex;align-items:center;justify-content:center;
+  gap:clamp(8px,1.4vw,14px);border-radius:14px;background:var(--tile);
+  padding:clamp(12px,2.3vh,24px);font-size:clamp(15px,2.9vh,28px)}
+.cancel.wide svg{width:1.1em;height:1.1em;fill:none;stroke:currentColor;stroke-width:2.2;
+  stroke-linecap:round;stroke-linejoin:round;opacity:.65}
+@media (hover:hover){.cancel.wide:hover{border-color:var(--ink)}}
+.cancel.wide:active{transform:scale(.99)}
+
+/* ================= the two confirmations ================= */
+.confirm{align-items:center;justify-content:center;text-align:center}
+.tick{width:clamp(70px,15vh,130px);aspect-ratio:1;border-radius:50%;display:grid;place-items:center;
+  margin-bottom:2.6vh}
+.tick svg{width:52%;height:52%;fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}
+.tick.ok{background:var(--open-fill);border:5px solid var(--open)}
+.tick.ok svg{stroke:var(--open)}
+.tick.back{background:var(--butter-soft);border:5px solid var(--butter)}
+.tick.back svg{stroke:var(--butter-ink)}
+.cname{font-size:clamp(20px,4.6vh,42px);font-weight:700;line-height:1.1}
+.ctime{font-size:clamp(44px,11vh,96px);font-weight:800;letter-spacing:-.03em;line-height:1;
+  margin-top:1.8vh;font-variant-numeric:tabular-nums}
+.cwhat{font-size:clamp(14px,2.6vh,25px);opacity:.6;margin-top:1.6vh;font-weight:500}
+.takepass{margin-top:2.4vh;display:inline-flex;align-items:center;gap:10px;
+  padding:clamp(10px,1.7vh,17px) clamp(18px,2.6vw,30px);border-radius:999px;
+  background:var(--butter-soft);border:2px solid var(--butter);
+  font:700 clamp(15px,3vh,28px) var(--f)}
+
+/* ================= PIN pad ================= */
+.pinscreen{align-items:center;text-align:center}
+.pinscreen h2{font-size:clamp(22px,4.6vh,38px)}
+.pindots{display:flex;gap:14px;margin:3vh 0 1vh}
+.pindots i{width:clamp(13px,2.2vh,18px);aspect-ratio:1;border-radius:50%;
+  border:2.5px solid var(--edge);display:block}
+.pindots i.on{background:var(--ink);border-color:var(--ink)}
+.pindots.bad i{border-color:var(--occ)}
+.keypad{display:grid;grid-template-columns:repeat(3,1fr);gap:clamp(8px,1.4vh,14px);
+  width:min(92vw,340px);margin-top:1.4vh}
+.kb{border:2px solid var(--edge);background:var(--tile);border-radius:14px;
+  font:700 clamp(20px,4vh,30px) var(--f);color:var(--ink);cursor:pointer;
+  padding:clamp(12px,2.1vh,20px) 0}
+.kb:active{transform:scale(.97)}
+.kb.wide{font-size:clamp(12px,2vh,16px);font-weight:800;letter-spacing:.06em}
+
+/* The teacher's own pad, so she can see at a glance the keypad is hers and not
+   the student's. */
+.pinscreen.teacherpin{background:var(--occ)}
+.pinscreen.teacherpin h2,.pinscreen.teacherpin .sub{color:#fff}
+.pinscreen.teacherpin .sub{opacity:.85}
+.pinscreen.teacherpin .pindots i{border-color:rgba(255,255,255,.6)}
+.pinscreen.teacherpin .pindots i.on{background:#fff;border-color:#fff}
+.pinscreen.teacherpin .pindots.bad i{border-color:#fff;background:rgba(255,255,255,.25)}
+.pinscreen.teacherpin .kb{background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.45);
+  color:#fff}
+.pinscreen.teacherpin .cancel{border-color:rgba(255,255,255,.55);color:#fff}
+
+/* ================= hand back to the student ================= */
+.handoff{background:var(--occ);align-items:center;justify-content:center;text-align:center;
+  padding:clamp(20px,4vh,54px) clamp(18px,4vw,60px)}
+.handoff *{color:#fff}
+.handmid{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  min-height:0}
+.handword{font-size:clamp(15px,2.6vh,26px);font-weight:800;letter-spacing:.16em;
+  text-transform:uppercase;opacity:.7}
+.handline{font-size:clamp(19px,4vh,40px);font-weight:600;opacity:.9;margin-top:2.4vh;
+  text-wrap:balance}
+.handname{font-size:clamp(40px,11vh,110px);font-weight:800;letter-spacing:-.03em;
+  line-height:1;margin-top:1.4vh}
+.handbtn{flex:0 0 auto;border:none;border-radius:16px;background:#fff;color:var(--occ);
+  cursor:pointer;font:800 clamp(18px,3.6vh,34px) var(--f);
+  padding:clamp(15px,2.6vh,26px) clamp(28px,5vw,60px);margin-bottom:clamp(8px,1.6vh,20px)}
+.handbtn:active{transform:scale(.98)}
+
+/* ================= teacher panel ================= */
+.teacher{flex-direction:row;background:var(--bg)}
+.trail{flex:0 0 auto;width:clamp(150px,21vw,240px);border-right:2px solid var(--edge);
+  background:var(--tile);display:flex;flex-direction:column;gap:3px;
+  padding:clamp(12px,2vh,22px) clamp(8px,1vw,14px);overflow:auto}
+.tbrand{font-size:clamp(12px,1.9vh,16px);font-weight:800;letter-spacing:.1em;
+  text-transform:uppercase;opacity:.45;padding:0 10px 1.6vh}
+.tnav{text-align:left;border:none;background:transparent;border-radius:10px;cursor:pointer;
+  font:600 clamp(13px,2.2vh,19px) var(--f);color:var(--ink);padding:clamp(9px,1.5vh,14px) 10px}
+.tnav.on{background:var(--butter-soft);box-shadow:inset 0 0 0 2px var(--butter);font-weight:800}
+.tspacer{flex:1}
+.tdone{border:2px solid var(--edge);background:var(--bg);border-radius:10px;cursor:pointer;
+  font:700 clamp(11px,1.8vh,15px) var(--f);color:var(--ink);padding:clamp(9px,1.5vh,14px) 10px;
+  text-align:left}
+.tpane{flex:1;min-width:0;overflow:auto;-webkit-overflow-scrolling:touch;
+  padding:clamp(16px,3vh,38px) clamp(16px,3vw,44px)}
+.tpane h2{font-size:clamp(20px,4vh,34px);font-weight:700;letter-spacing:-.02em;margin:0 0 .4vh}
+.tpane .pnote{font-size:clamp(12px,2vh,17px);opacity:.6;font-weight:500;margin:0 0 2.4vh;
+  max-width:62ch;line-height:1.5}
+table.t{width:100%;border-collapse:collapse;font-size:clamp(12px,1.9vh,16px)}
+table.t th{text-align:left;font-size:clamp(9px,1.4vh,12px);font-weight:800;letter-spacing:.09em;
+  text-transform:uppercase;opacity:.5;padding:0 10px 8px;border-bottom:2px solid var(--edge);
+  white-space:nowrap}
+table.t td{padding:clamp(8px,1.4vh,13px) 10px;border-bottom:1px solid var(--edge);font-weight:500}
+table.t td b{font-weight:700}
+table.t tr.walk td{background:var(--occ-fill)}
+.tnum{font-variant-numeric:tabular-nums}
+.badge{display:inline-block;padding:3px 9px;border-radius:999px;font-size:.82em;font-weight:700;
+  border:1.5px solid var(--edge);background:var(--tile)}
+.badge.pass{border-color:var(--occ-edge);background:var(--occ-fill);color:var(--occ)}
+.badge.walk{border-color:var(--occ);background:var(--occ-fill);color:var(--occ)}
+.badge.outnow{border-color:var(--butter);background:var(--butter-soft);color:var(--butter-ink)}
+.badge.nopin{border-style:dashed;opacity:.7}
+.btn{border:2px solid var(--ink);background:var(--ink);color:#fff;border-radius:11px;cursor:pointer;
+  font:700 clamp(12px,2vh,16px) var(--f);padding:clamp(9px,1.5vh,14px) clamp(14px,2vw,22px)}
+.btn.ghost{background:transparent;color:var(--ink);border-color:var(--edge)}
+.btn.danger{background:var(--occ);border-color:var(--occ)}
+.btn.small{padding:6px 12px;font-size:clamp(11px,1.7vh,14px)}
+.btn:active{transform:scale(.98)}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:2vh}
+/* A whole roster of buttons: big enough to hit without looking. */
+.row.names .btn{font-size:clamp(13px,2.2vh,18px);padding:clamp(11px,1.9vh,17px) clamp(14px,2vw,22px)}
+textarea.ta,input.in{font:500 clamp(13px,2vh,17px) var(--f);color:var(--ink);background:var(--bg);
+  border:2px solid var(--edge);border-radius:11px;padding:clamp(9px,1.4vh,13px);width:100%;
+  -webkit-user-select:text;user-select:text}
+textarea.ta{min-height:34vh;line-height:1.6;resize:vertical}
+input.in{max-width:220px}
+input.in.num{max-width:92px;text-align:center;font-weight:700}
+/* One card per class in the Classes pane. */
+.card{border:2px solid var(--edge);border-radius:16px;padding:clamp(14px,2.4vh,26px);
+  margin-bottom:2.2vh;background:var(--bg)}
+.flab{display:block;font-size:clamp(9px,1.4vh,12px);font-weight:800;letter-spacing:.09em;
+  text-transform:uppercase;opacity:.5;margin:1.6vh 0 .7vh}
+textarea.ta.short{min-height:9vh}
+.dl{margin:0;font-size:clamp(12px,2vh,17px)}
+.dl dt{font-weight:700;margin-top:2.2vh}
+.dl dd{margin:.5vh 0 0;opacity:.75;font-weight:500;line-height:1.5;max-width:64ch}
+.ok{color:var(--open);font-weight:700}
+.warn{color:var(--occ);font-weight:700}
