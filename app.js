@@ -153,8 +153,11 @@ function handPicked(){
   return c;
 }
 function activeClass(){return handPicked()||scheduledClass()}
-function setInRoom(clsId){S.inRoom={clsId:clsId,day:dayKey(now())};save()}
-function clearInRoom(){S.inRoom=null;save()}
+function setInRoom(clsId){
+  S.inRoom={clsId:clsId,day:dayKey(now())};save();
+  remoteWrite("PUT","/inRoom",S.inRoom);
+}
+function clearInRoom(){S.inRoom=null;save();remoteWrite("PUT","/inRoom",null)}
 /* Where we are inside the current period: how far in, how long left. Only the
    timetable counts here \u2014 a class put on the board by hand has no clock. */
 function classWindow(){
@@ -459,10 +462,13 @@ function askWalkout(c,nm){
 }
 function recordWalkout(c,nm){
   var t=now(),rec={id:uid(),nm:nm,clsId:c.id,cls:c.name,reason:"other",at:t,walk:true};
+  var entry={id:rec.id,nm:nm,cls:c.name,reason:"other",out:t,back:null,
+             type:"walkout",day:dayKey(t)};
   S.out.push(rec);
-  S.log.push({id:rec.id,nm:nm,cls:c.name,reason:"other",out:t,back:null,
-              type:"walkout",day:dayKey(t)});
+  S.log.push(entry);
   save();
+  remoteWrite("PUT","/out/"+rec.id,rec);
+  remoteWrite("PUT","/log/"+rec.id,entry);
   $("#s3name").textContent=nm;
   $("#s3time").textContent=fmt(t);
   $("#s3reason").textContent="Recorded as walked out";
@@ -493,10 +499,13 @@ function beginSignOut(c,nm,rk,over){
 function finishSignOut(c,nm,rk,override,code){
   var r=reasonOf(rk),t=now(),
       rec={id:uid(),nm:nm,clsId:c.id,cls:c.name,reason:rk,at:t,pin:code,override:!!override};
+  var entry={id:rec.id,nm:nm,cls:c.name,reason:rk,out:t,back:null,type:"departure",
+             day:dayKey(t),override:!!override};
   S.out.push(rec);
-  S.log.push({id:rec.id,nm:nm,cls:c.name,reason:rk,out:t,back:null,type:"departure",
-              day:dayKey(t),override:!!override});
+  S.log.push(entry);
   save();
+  remoteWrite("PUT","/out/"+rec.id,rec);
+  remoteWrite("PUT","/log/"+rec.id,entry);
   $("#s3name").textContent=nm;
   $("#s3time").textContent=fmt(t);
   $("#s3reason").textContent="Signed out to "+
@@ -552,13 +561,22 @@ function askReturn(o){
     function(){doReturn(o)});
 }
 
-function doReturn(o){
+/* The one place a trip is closed off, so the board and the panel can never
+   disagree about it. */
+function applyReturn(o){
   var t=now(),dur=outMins(o);
   S.out=S.out.filter(function(x){return x.id!==o.id});
   for(var i=0;i<S.log.length;i++){
     if(S.log[i].id===o.id){S.log[i].back=t;S.log[i].dur=dur;break}
   }
   save();
+  remoteWrite("DELETE","/out/"+o.id);
+  remoteWrite("PATCH","/log/"+o.id,{back:t,dur:dur});
+  return {t:t,dur:dur};
+}
+
+function doReturn(o){
+  var r=applyReturn(o),t=r.t,dur=r.dur;
   $("#s5name").textContent=o.nm;
   $("#s5time").textContent=fmt(t);
   $("#s5dur").textContent=(o.walk?"Back after ":"Out for ")+dur+(dur===1?" minute":" minutes");
@@ -638,6 +656,152 @@ function buildKeypad(){
   hc.addEventListener("click",function(e){e.stopPropagation()});
 })();
 
+/* ========================= sharing between devices ========================= */
+/* One board, many devices. Writes go to a Firebase Realtime Database over plain
+   REST; reads come back on an EventSource stream, so a walkout marked on a phone
+   turns the iPad yellow a second later with nothing to refresh.
+
+   Local storage stays the source of truth for drawing the screen, so a dropped
+   connection never blanks the board. Writes that fail are queued and replayed. */
+
+var SYNCKEY="hallpass.sync";
+var sync={url:"",board:"",es:null,status:"off",queue:[],flushing:false,seeded:false};
+var remote={};
+
+function syncOn(){return !!(sync.url&&sync.board)}
+function syncBase(){
+  return sync.url.replace(/\/+$/,"")+"/boards/"+encodeURIComponent(sync.board);
+}
+function syncLoadCfg(){
+  try{
+    var c=JSON.parse(window.localStorage.getItem(SYNCKEY)||"{}");
+    sync.url=c.url||"";sync.board=c.board||"";sync.queue=c.queue||[];
+  }catch(e){}
+}
+function syncSaveCfg(){
+  try{
+    window.localStorage.setItem(SYNCKEY,
+      JSON.stringify({url:sync.url,board:sync.board,queue:sync.queue}));
+  }catch(e){}
+}
+function setStatus(st){
+  if(sync.status===st)return;
+  sync.status=st;
+  if(!$("#steacher").hidden&&curPane==="sync")drawPane();
+}
+
+/* ---- writing ---- */
+function remoteWrite(method,path,value){
+  if(!syncOn())return;
+  sync.queue.push({m:method,p:path,v:value===undefined?null:value});
+  if(sync.queue.length>400)sync.queue.splice(0,sync.queue.length-400);
+  syncSaveCfg();
+  flushQueue();
+}
+function flushQueue(){
+  if(!syncOn()||sync.flushing||!sync.queue.length)return;
+  sync.flushing=true;
+  var job=sync.queue[0],opts={method:job.m};
+  if(job.m!=="DELETE"){opts.body=JSON.stringify(job.v);opts.headers={"Content-Type":"application/json"}}
+  fetch(syncBase()+job.p+".json",opts).then(function(r){
+    if(!r.ok)throw new Error(r.status);
+    sync.queue.shift();syncSaveCfg();sync.flushing=false;
+    if(sync.queue.length)flushQueue();
+    else setStatus(sync.es?"live":"saved");
+  }).catch(function(){
+    sync.flushing=false;setStatus("offline");
+  });
+}
+
+/* ---- reading ---- */
+function pathSet(obj,path,data,patch){
+  if(path==="/"){
+    if(!patch){for(var k in obj)delete obj[k]}
+    if(data)for(var k2 in data)obj[k2]=data[k2];
+    return;
+  }
+  var parts=path.split("/").filter(function(x){return x.length}),cur=obj;
+  for(var i=0;i<parts.length-1;i++){
+    if(!cur[parts[i]]||typeof cur[parts[i]]!=="object")cur[parts[i]]={};
+    cur=cur[parts[i]];
+  }
+  var last=parts[parts.length-1];
+  if(data===null&&!patch)delete cur[last];
+  else if(patch&&cur[last]&&typeof cur[last]==="object"){for(var k3 in data)cur[last][k3]=data[k3]}
+  else cur[last]=data;
+}
+function mapToArr(m){
+  if(!m)return [];
+  if(Object.prototype.toString.call(m)==="[object Array]")return m.filter(Boolean);
+  return Object.keys(m).map(function(k){return m[k]}).filter(Boolean);
+}
+function arrToMap(a){
+  var m={};(a||[]).forEach(function(x){if(x&&x.id)m[x.id]=x});return m;
+}
+
+function adoptRemote(){
+  var empty=!remote||!Object.keys(remote).length;
+  if(empty){
+    /* Nothing up there yet: this device seeds the board. */
+    if(!sync.seeded){
+      sync.seeded=true;
+      remoteWrite("PUT","/out",arrToMap(S.out));
+      remoteWrite("PUT","/log",arrToMap(S.log));
+      remoteWrite("PUT","/classes",S.classes);
+      remoteWrite("PUT","/settings",S.settings);
+      remoteWrite("PUT","/limits",S.limits);
+      remoteWrite("PUT","/inRoom",S.inRoom);
+    }
+    return;
+  }
+  sync.seeded=true;
+  S.out=mapToArr(remote.out);
+  S.log=mapToArr(remote.log);
+  if(remote.classes)S.classes=remote.classes;
+  if(remote.limits)S.limits=remote.limits;
+  if(remote.settings){
+    var d=defaults().settings,k;
+    for(k in d){if(!(k in remote.settings))remote.settings[k]=d[k]}
+    S.settings=remote.settings;
+  }
+  S.inRoom=remote.inRoom||null;
+  save();
+  redraw();
+}
+function redraw(){
+  if(!$("#s0").hidden)renderStatus();
+  else if(!$("#s1").hidden)renderRoster();
+  else if(!$("#steacher").hidden)drawPane();
+}
+
+function syncConnect(){
+  if(sync.es){try{sync.es.close()}catch(e){}sync.es=null}
+  if(!syncOn()||typeof window.EventSource==="undefined"){setStatus("off");return}
+  setStatus("connecting");
+  try{
+    var es=new EventSource(syncBase()+".json");
+    sync.es=es;
+    es.addEventListener("put",function(e){
+      try{var m=JSON.parse(e.data);pathSet(remote,m.path,m.data,false);adoptRemote()}catch(err){}
+    });
+    es.addEventListener("patch",function(e){
+      try{var m=JSON.parse(e.data);pathSet(remote,m.path,m.data,true);adoptRemote()}catch(err){}
+    });
+    es.addEventListener("open",function(){setStatus("live");flushQueue()});
+    es.onerror=function(){
+      setStatus("offline");
+      /* EventSource reconnects on its own; nudge the write queue too. */
+      flushQueue();
+    };
+  }catch(e){setStatus("offline")}
+}
+
+/* The browser throttles a backgrounded tab; pick straight back up on return. */
+document.addEventListener("visibilitychange",function(){
+  if(!document.hidden&&syncOn()){flushQueue();if(!sync.es)syncConnect()}
+});
+setInterval(flushQueue,8000);
+
 /* ========================= teacher panel ========================= */
 
 var curPane="room";
@@ -666,6 +830,7 @@ function drawPane(){
   else if(curPane==="students")paneStudents(p);
   else if(curPane==="limits")paneLimits(p);
   else if(curPane==="classes")paneClasses(p);
+  else if(curPane==="sync")paneSync(p);
   else paneSettings(p);
 }
 
@@ -722,10 +887,8 @@ function paneOut(p){
       var id=b.getAttribute("data-back"),o=null;
       S.out.forEach(function(x){if(x.id===id)o=x});
       if(!o)return;
-      var t=now(),dur=outMins(o);
-      S.out=S.out.filter(function(x){return x.id!==id});
-      for(var i=0;i<S.log.length;i++){if(S.log[i].id===id){S.log[i].back=t;S.log[i].dur=dur;break}}
-      save();drawPane();
+      applyReturn(o);
+      drawPane();
     });
   });
 }
@@ -1045,7 +1208,7 @@ function paneClasses(p){
 
   $("#addclass").addEventListener("click",function(){
     S.classes.push({id:uid(),name:"New class",meets:[],roster:[]});
-    save();drawPane();
+    save();remoteWrite("PUT","/classes",S.classes);drawPane();
   });
   p.querySelectorAll("[data-save]").forEach(function(b){
     b.addEventListener("click",function(){
@@ -1070,6 +1233,7 @@ function paneClasses(p){
       c.roster=p.querySelector('[data-roster="'+id+'"]').value.split("\n")
                  .map(function(s){return s.trim()}).filter(function(s){return s.length});
       save();
+      remoteWrite("PUT","/classes",S.classes);
       msg.className="ok";
       msg.textContent="Saved — "+c.roster.length+" students.";
     });
@@ -1081,7 +1245,10 @@ function paneClasses(p){
       if(!window.confirm("Delete "+c.name+" and its roster? Records already logged are kept."))return;
       S.classes=S.classes.filter(function(x){return x.id!==id});
       S.out=S.out.filter(function(o){return o.clsId!==id});
-      save();drawPane();
+      save();
+      remoteWrite("PUT","/classes",S.classes);
+      remoteWrite("PUT","/out",arrToMap(S.out));
+      drawPane();
     });
   });
 }
@@ -1119,8 +1286,76 @@ function paneLimits(p){
       return;
     }
     S.settings.maxOut=mo;S.limits=next;save();
+    remoteWrite("PUT","/settings",S.settings);
+    remoteWrite("PUT","/limits",S.limits);
     $("#limmsg").className="ok";
     $("#limmsg").textContent="Saved.";
+  });
+}
+
+/* ---- sharing ---- */
+function statusWords(){
+  if(!syncOn())return {t:"Not sharing",d:"This device keeps its own records.",c:""};
+  if(sync.status==="live")return {t:"Sharing",d:"Connected. Changes appear on your other devices straight away.",c:"ok"};
+  if(sync.status==="connecting")return {t:"Connecting\u2026",d:"Reaching the shared board.",c:""};
+  if(sync.status==="saved")return {t:"Saved",d:"Changes are going up, but live updates are not coming back yet.",c:""};
+  return {t:"Offline",d:"The board still works. Anything you do is queued and sent when the connection returns.",c:"warn"};
+}
+function setupLink(){
+  return location.origin+location.pathname+
+    "?db="+encodeURIComponent(sync.url)+"&board="+encodeURIComponent(sync.board);
+}
+function paneSync(p){
+  var st=statusWords();
+  var h='<h2>Sharing between devices</h2>'+
+    '<p class="pnote">Put the same two lines into your phone and your iPad and they '+
+    'become one board: who is out, the whole log, your classes and settings. Mark a '+
+    'walkout on your phone and the iPad turns yellow a second later.</p>'+
+    '<p class="pnote '+st.c+'"><b>'+esc(st.t)+'</b> \u2014 '+esc(st.d)+
+    (sync.queue.length?' <b>'+sync.queue.length+' change'+(sync.queue.length===1?'':'s')+
+      ' waiting to send.</b>':'')+'</p>'+
+    '<dl class="dl">'+
+    '<dt>Database address</dt><dd>From the Firebase console.<br>'+
+      '<input class="in" id="syncurl" style="max-width:100%" spellcheck="false" '+
+      'placeholder="https://something-default-rtdb.firebaseio.com" value="'+esc(sync.url)+'"></dd>'+
+    '<dt>Board id</dt><dd>The private name for this room. Must match on every device.<br>'+
+      '<input class="in" id="syncboard" style="max-width:100%" spellcheck="false" value="'+esc(sync.board)+'"></dd>'+
+    '</dl>'+
+    '<div class="row" style="margin-top:2.4vh">'+
+    '<button class="btn" id="syncsave">Save and connect</button>'+
+    (syncOn()?'<button class="btn ghost" id="synccopy">Copy setup link</button>'+
+              '<button class="btn ghost" id="syncoff">Stop sharing</button>':'')+
+    '<span id="syncmsg" class="ok"></span></div>';
+  if(syncOn()){
+    h+='<p class="pnote" style="margin-top:2.4vh">The setup link carries both lines. '+
+       'Message it to yourself, open it on the other device, and it sets itself up \u2014 '+
+       'no typing. Treat it like a key: anyone who opens it joins this board.</p>';
+  }
+  p.innerHTML=h;
+
+  $("#syncsave").addEventListener("click",function(){
+    var u=$("#syncurl").value.trim().replace(/\/+$/,""),b=$("#syncboard").value.trim();
+    var msg=$("#syncmsg");
+    if(u&&!/^https:\/\/[^\s\/]+$/.test(u)){
+      msg.className="warn";
+      msg.textContent="That does not look like the database address \u2014 it should be https:// and nothing after the host.";
+      return;
+    }
+    sync.url=u;sync.board=b;sync.seeded=false;remote={};
+    syncSaveCfg();
+    msg.className="ok";
+    if(syncOn()){msg.textContent="Connecting\u2026";syncConnect()}
+    else{msg.textContent="Sharing switched off.";if(sync.es){sync.es.close();sync.es=null}setStatus("off")}
+    setTimeout(drawPane,1200);
+  });
+  var cp=$("#synccopy");
+  if(cp)cp.addEventListener("click",function(){copyText(setupLink(),cp,"Copy setup link")});
+  var off=$("#syncoff");
+  if(off)off.addEventListener("click",function(){
+    if(!window.confirm("Stop sharing on this device? Its records stay, but it stops talking to the others."))return;
+    sync.url="";sync.board="";sync.queue=[];syncSaveCfg();
+    if(sync.es){sync.es.close();sync.es=null}
+    setStatus("off");drawPane();
   });
 }
 
@@ -1167,6 +1402,7 @@ function paneSettings(p){
     st.openLabel=$("#setopen").value.trim()||"OPEN";
     st.occLabel=$("#setocc").value.trim()||"SOMEONE IS OUT";
     save();
+    remoteWrite("PUT","/settings",S.settings);
     $("#setmsg").className="ok";
     $("#setmsg").textContent="Saved.";
   });
@@ -1178,18 +1414,36 @@ function paneSettings(p){
       }
     });
     S.out=[];save();
+    remoteWrite("PUT","/out",null);
+    remoteWrite("PUT","/log",arrToMap(S.log));
     $("#datamsg").textContent="Board cleared.";
   });
   $("#wipelog").addEventListener("click",function(){
     if(!window.confirm("Delete every sign-out record on this device? Classes and rosters stay."))return;
     S.log=[];S.out=[];save();
+    remoteWrite("PUT","/log",null);
+    remoteWrite("PUT","/out",null);
     $("#datamsg").textContent="All records deleted.";
   });
 }
 
 /* ========================= boot ========================= */
 
+/* A setup link (?db=...&board=...) configures a new device in one tap, then
+   tidies itself out of the address bar. */
+(function(){
+  var q=new URLSearchParams(location.search||"");
+  if(q.get("db")||q.get("board")){
+    syncLoadCfg();
+    if(q.get("db"))sync.url=q.get("db").replace(/\/+$/,"");
+    if(q.get("board"))sync.board=q.get("board");
+    syncSaveCfg();
+    try{history.replaceState(null,"",location.pathname)}catch(e){}
+  }
+})();
+
 load();
+syncLoadCfg();
 buildKeypad();
 
 /* The board changes class on its own as the timetable moves. Nothing to press. */
@@ -1223,6 +1477,8 @@ setInterval(function(){
 if("serviceWorker" in navigator){
   navigator.serviceWorker.register("sw.js").catch(function(){});
 }
+
+syncConnect();
 
 show("s0");
 })();
